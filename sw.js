@@ -1,4 +1,4 @@
-const C='adhkar-v29';
+const C='adhkar-v33';
 const FILES=['./','./manifest.webmanifest','./icon-192.png','./icon-512.png','./hafs.18.woff2','./warsh.10.woff2','./qaloon.10.woff2','./en.js','./fr.js','./ru.js','./id.js','./it.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>Promise.all(FILES.map(f=>fetch(f,{redirect:'follow'}).then(r=>r.ok?clean(r).then(b=>c.put(f,b)):0).catch(()=>0)))).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
