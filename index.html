@@ -438,9 +438,32 @@ Array.prototype.forEach.call(document.querySelectorAll('#tabs button'),function(
 /* ===== Prayer times (computed on the device; works offline) ===== */
 var CITIES=[[L('مراكش'),31.6295,-7.9811],[L('الدار البيضاء'),33.5731,-7.5898],[L('الرباط'),34.0209,-6.8416],[L('فاس'),34.0331,-5.0003],[L('مكناس'),33.8935,-5.5473],[L('طنجة'),35.7595,-5.8340],[L('تطوان'),35.5785,-5.3684],[L('أكادير'),30.4278,-9.5981],[L('الصويرة'),31.5085,-9.7595],[L('وجدة'),34.6867,-1.9114],[L('العيون'),27.1253,-13.1625]];
 function rad(x){return x*Math.PI/180} function deg(x){return x*180/Math.PI}
-/* Sun position: standard low-precision solar formulas. Morocco convention: Fajr 19deg, Isha 17deg, Asr shadow x1, Dhuhr and Maghrib +5 min, Sunrise -5 min. */
-function prayerTimes(date,lat,lon){
-  var mid=Date.UTC(date.getFullYear(),date.getMonth(),date.getDate());
+/* Calculation methods. Angles follow the published standard methods (PrayTimes.org); Morocco convention is the Ministry of Awqaf one. */
+var METHODS={
+ MA:{n:L('المغرب (وزارة الأوقاف)'),f:19,i:17,adj:5},
+ MWL:{n:L('رابطة العالم الإسلامي'),f:18,i:17,adj:0},
+ EG:{n:L('الهيئة المصرية العامة للمساحة'),f:19.5,i:17.5,adj:0},
+ UQ:{n:L('أم القرى (مكة)'),f:18.5,im:90,adj:0},
+ KR:{n:L('جامعة العلوم الإسلامية بكراتشي'),f:18,i:18,adj:0},
+ NA:{n:L('أمريكا الشمالية (ISNA)'),f:15,i:15,adj:0}
+};
+var MKEYS=['MA','MWL','EG','UQ','KR','NA'];
+/* Pick a method from coordinates (rough regional boxes; the user can override). */
+function autoMethod(lat,lon){
+  function inb(a,b,c,d){return lat>=a&&lat<=b&&lon>=c&&lon<=d}
+  if(inb(21,36,-17.3,-1.8)||inb(27.6,36,-13.2,-1.8)) return 'MA';
+  if(inb(22,31.7,24.7,34.9)) return 'EG';
+  if(inb(23,37,60,93)) return 'KR';
+  if(inb(15,72,-170,-50)) return 'NA';
+  if(inb(16,32,36.5,56)) return 'UQ';
+  if(inb(-35,35,-18,52)&&lon<36.5&&lat<22) return 'EG';
+  return 'MWL';
+}
+function curMethod(lat,lon){ return (st.method&&METHODS[st.method])?st.method:autoMethod(lat,lon); }
+/* Sun position: standard low-precision solar formulas. date must be a Date whose UTC fields are the LOCAL solar date at the place. */
+function prayerTimes(date,lat,lon,mk){
+  var m=METHODS[mk||'MA'];
+  var mid=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate());
   var D=mid/86400000+2440587.5+0.5-2451545.0;
   var g=rad((357.529+0.98560028*D)%360), q=(280.459+0.98564736*D)%360;
   var L=rad((q+1.915*Math.sin(g)+0.020*Math.sin(2*g))%360), e=rad(23.439-0.00000036*D);
@@ -448,38 +471,76 @@ function prayerTimes(date,lat,lon){
   var dec=Math.asin(Math.sin(e)*Math.sin(L)), phi=rad(lat);
   var eqt=q/15-RA; eqt=(((eqt+12)%24)+24)%24-12;
   var noon=12-lon/15-eqt;
-  function H(alt){var c=(Math.sin(rad(alt))-Math.sin(phi)*Math.sin(dec))/(Math.cos(phi)*Math.cos(dec)); return deg(Math.acos(Math.max(-1,Math.min(1,c))))/15}
+  function Hraw(alt){return (Math.sin(rad(alt))-Math.sin(phi)*Math.sin(dec))/(Math.cos(phi)*Math.cos(dec))}
+  function H(alt){return deg(Math.acos(Math.max(-1,Math.min(1,Hraw(alt)))))/15}
   var asrAlt=deg(Math.atan(1/(1+Math.tan(Math.abs(phi-dec)))));
-  var hrs=[noon-H(-19),noon-H(-0.833)-5/60,noon+5/60,noon+H(asrAlt),noon+H(-0.833)+5/60,noon+H(-17)];
+  var rise=noon-H(-0.833), set=noon+H(-0.833), night=24-(set-rise), hi=Math.abs(lat)>48.5;
+  var fajr,isha;
+  var cf=Hraw(-m.f); fajr=(Math.abs(cf)>1)?rise-night*(m.f/60):noon-H(-m.f);
+  if(m.im){isha=set+m.im/60}
+  else{var ci=Hraw(-m.i); isha=(Math.abs(ci)>1)?set+night*(m.i/60):noon+H(-m.i)}
+  var a=m.adj/60;
+  var hrs=[fajr,rise-a,noon+a,noon+H(asrAlt),set+a,isha];
   return hrs.map(function(h){return mid+Math.round(h*3600000)});
 }
 var PN=[L('الفجر'),L('الشروق'),L('الظهر'),L('العصر'),L('المغرب'),L('العشاء')];
 function hm(ms){var d=new Date(Math.round(ms/60000)*60000),a=d.getHours(),b=d.getMinutes(),pm=a>=12,h=a%12||12;return h+':'+(b<10?'0':'')+b+' '+(LANG==='ar'?(pm?'م':'ص'):(pm?'PM':'AM'))}
 function pad2(n){return (n<10?'0':'')+n}
 var tick=null; function stopTick(){if(tick){clearInterval(tick);tick=null}}
+function lday(lon,add){return new Date(Date.now()+lon/15*3600000+(add||0)*86400000)}
+function usingGps(){return !!st.loc&&st.src!=='city'}
+function placeOf(){
+  if(usingGps()) return {lat:st.loc.lat,lon:st.loc.lon,gps:true};
+  var c=CITIES[st.city]||CITIES[0]; return {lat:c[1],lon:c[2],gps:false,name:c[0]};
+}
+function refreshLoc(cb){
+  if(!navigator.geolocation||!st.loc) return;
+  if(st.loc.t&&Date.now()-st.loc.t<21600000) return;
+  navigator.geolocation.getCurrentPosition(function(p){
+    var moved=Math.abs(p.coords.latitude-st.loc.lat)+Math.abs(p.coords.longitude-st.loc.lon)>0.1;
+    st.loc={lat:p.coords.latitude,lon:p.coords.longitude,t:Date.now()}; save(); if(moved&&cb) cb();
+  },function(){},{enableHighAccuracy:false,timeout:10000,maximumAge:3600000});
+}
 function renderP(){
   var box=document.getElementById('v-prayer'); box.innerHTML='';
-  var c=CITIES[st.city]||CITIES[0];
+  var pl=placeOf();
+  var btn=document.createElement('button'); btn.className='bigbtn alt'; btn.type='button';
+  btn.textContent=L('استخدم موقعي الحالي (تلقائي لأي بلد)');
+  var msg=document.createElement('p'); msg.className='note';
+  btn.onclick=function(){msg.textContent=L('جارٍ تحديد الموقع…'); askLoc(function(err){ if(err){msg.textContent=err; return} st.src='gps'; save(); renderP()})};
+  box.appendChild(btn); box.appendChild(msg);
   var sel=document.createElement('select'); sel.className='sel'; sel.setAttribute('aria-label',L('المدينة'));
-  CITIES.forEach(function(x,i){var o=document.createElement('option'); o.value=i; o.textContent=x[0]; if(i===st.city) o.selected=true; sel.appendChild(o)});
-  sel.onchange=function(){st.city=+sel.value; save(); renderP()};
+  if(st.loc){var o0=document.createElement('option'); o0.value='gps'; o0.textContent=L('موقعي الحالي'); if(pl.gps) o0.selected=true; sel.appendChild(o0)}
+  CITIES.forEach(function(x,i){var o=document.createElement('option'); o.value=i; o.textContent=x[0]; if(!pl.gps&&i===st.city) o.selected=true; sel.appendChild(o)});
+  sel.onchange=function(){ if(sel.value==='gps'){st.src='gps'} else {st.city=+sel.value; st.src='city'} save(); renderP()};
   box.appendChild(sel);
+  var mk=curMethod(pl.lat,pl.lon);
+  var ms=document.createElement('select'); ms.className='sel'; ms.setAttribute('aria-label',L('طريقة الحساب'));
+  var oa=document.createElement('option'); oa.value=''; oa.textContent=L('طريقة الحساب: تلقائي حسب البلد')+' ('+METHODS[autoMethod(pl.lat,pl.lon)].n+')'; if(!st.method) oa.selected=true; ms.appendChild(oa);
+  MKEYS.forEach(function(k){var o=document.createElement('option'); o.value=k; o.textContent=METHODS[k].n; if(st.method===k) o.selected=true; ms.appendChild(o)});
+  ms.onchange=function(){st.method=ms.value; save(); renderP()};
+  box.appendChild(ms);
   var nx=document.createElement('div'); nx.className='pnext'; box.appendChild(nx);
   var rows=document.createElement('div'); box.appendChild(rows);
-  var note=document.createElement('p'); note.className='note'; note.textContent=L('الأوقات محسوبة على جهازك حسب الإحداثيات (الفجر 19° والعشاء 17° وفق المعتمد في المغرب). قد تختلف دقائق قليلة عن تقويم وزارة الأوقاف الرسمي، فاعتمد التقويم الرسمي للصيام والإفطار.'); box.appendChild(note);
+  var tz=''; try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
+  var info=document.createElement('p'); info.className='note';
+  info.textContent=L('الموقع')+': '+(pl.gps?L('موقعك الحالي'):pl.name)+' ('+pl.lat.toFixed(2)+'، '+pl.lon.toFixed(2)+') · '+L('الطريقة')+': '+METHODS[mk].n+(tz?' · '+L('التوقيت')+': '+tz:'');
+  box.appendChild(info);
+  var note=document.createElement('p'); note.className='note'; note.textContent=L('الأوقات محسوبة على جهازك من الإحداثيات وتُعرض بتوقيت جهازك (يتغير تلقائياً بتغيّر البلد). في المغرب يُعتمد الفجر 19° والعشاء 17°، وفي غيره تُختار الطريقة المعتمدة في المنطقة ويمكنك تغييرها. قد تختلف دقائق قليلة عن التقويم الرسمي في بلدك، فاعتمد التقويم الرسمي للصيام والإفطار.'); box.appendChild(note);
   function upd(){
-    var now=Date.now(), t=prayerTimes(new Date(),c[1],c[2]), idx=-1, i;
+    var now=Date.now(), t=prayerTimes(lday(pl.lon,0),pl.lat,pl.lon,mk), idx=-1, i;
     for(i=0;i<6;i++){ if(i===1) continue; if(t[i]>now){idx=i;break} }
     var target;
-    if(idx<0){var tm=new Date(); tm.setDate(tm.getDate()+1); target=prayerTimes(tm,c[1],c[2])[0]; idx=0} else target=t[idx];
+    if(idx<0){target=prayerTimes(lday(pl.lon,1),pl.lat,pl.lon,mk)[0]; idx=0} else target=t[idx];
     var diff=Math.max(0,Math.floor((target-now)/1000)), hh=Math.floor(diff/3600), mm=Math.floor(diff%3600/60), ss=diff%60;
     nx.innerHTML=''; var s1=document.createElement('small'); s1.textContent=L('الصلاة القادمة'); var b=document.createElement('b'); b.textContent=PN[idx]+' · '+hm(target);
     var s2=document.createElement('b'); s2.className='big'; s2.textContent=pad2(hh)+':'+pad2(mm)+':'+pad2(ss);
     nx.appendChild(s1); nx.appendChild(b); nx.appendChild(s2);
     rows.innerHTML='';
-    t.forEach(function(ms,k){var r=document.createElement('div'); r.className='prow'+(k===idx?' nx':'')+((ms<now&&k!==idx)?' pass':''); var a=document.createElement('span'); a.textContent=PN[k]; var d=document.createElement('span'); d.className='tm'; d.textContent=hm(ms); r.appendChild(a); r.appendChild(d); rows.appendChild(r)});
+    t.forEach(function(ms2,k){var r=document.createElement('div'); r.className='prow'+(k===idx?' nx':'')+((ms2<now&&k!==idx)?' pass':''); var a=document.createElement('span'); a.textContent=PN[k]; var d=document.createElement('span'); d.className='tm'; d.textContent=hm(ms2); r.appendChild(a); r.appendChild(d); rows.appendChild(r)});
   }
   upd(); stopTick(); tick=setInterval(upd,1000);
+  if(pl.gps) refreshLoc(renderP);
 }
 
 /* ===== Quran: text and fonts by King Fahd Glorious Quran Printing Complex, unmodified ===== */
@@ -676,10 +737,10 @@ function qiblaBearing(lat,lon){
   var y=Math.sin(dl)*Math.cos(p2), x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
   return (deg(Math.atan2(y,x))+360)%360;
 }
-function curPos(){ if(st.loc) return {lat:st.loc.lat,lon:st.loc.lon,name:L('موقعك الحالي')}; var c=CITIES[st.city]||CITIES[0]; return {lat:c[1],lon:c[2],name:c[0]}; }
+function curPos(){ if(usingGps()) return {lat:st.loc.lat,lon:st.loc.lon,name:L('موقعك الحالي')}; var c=CITIES[st.city]||CITIES[0]; return {lat:c[1],lon:c[2],name:c[0]}; }
 function askLoc(done){
   if(!navigator.geolocation){done(L('هذا الجهاز لا يدعم تحديد الموقع')); return}
-  navigator.geolocation.getCurrentPosition(function(p){st.loc={lat:p.coords.latitude,lon:p.coords.longitude}; save(); done()},function(){done(L('تعذّر تحديد الموقع. فعّل الموقع للتطبيق أو اختر مدينتك.'))},{enableHighAccuracy:true,timeout:15000,maximumAge:300000});
+  navigator.geolocation.getCurrentPosition(function(p){st.loc={lat:p.coords.latitude,lon:p.coords.longitude,t:Date.now()}; st.src='gps'; save(); done()},function(){done(L('تعذّر تحديد الموقع. فعّل الموقع للتطبيق أو اختر مدينتك.'))},{enableHighAccuracy:true,timeout:15000,maximumAge:300000});
 }
 var compassH=null, compassOn=false;
 function stopCompass(){ if(compassOn){window.removeEventListener('deviceorientationabsolute',onOri,true); window.removeEventListener('deviceorientation',onOri,true); compassOn=false} }
