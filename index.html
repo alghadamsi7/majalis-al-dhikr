@@ -814,10 +814,10 @@ function renderM(){
 
 /* ===== Home ===== */
 function nextPrayer(c){
-  var now=Date.now(), t=prayerTimes(new Date(),c[1],c[2]), idx=-1, i;
+  var pl=placeOf(), mk=curMethod(pl.lat,pl.lon), now=Date.now(), t=prayerTimes(lday(pl.lon,0),pl.lat,pl.lon,mk), idx=-1, i;
   for(i=0;i<6;i++){ if(i===1) continue; if(t[i]>now){idx=i;break} }
   var target;
-  if(idx<0){var tm=new Date(); tm.setDate(tm.getDate()+1); target=prayerTimes(tm,c[1],c[2])[0]; idx=0} else target=t[idx];
+  if(idx<0){target=prayerTimes(lday(pl.lon,1),pl.lat,pl.lon,mk)[0]; idx=0} else target=t[idx];
   return {idx:idx,target:target,now:now};
 }
 var HI={adhkar:'M3 5h7a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H3zM21 5h-7a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h7z',quran:'M5 3h12a2 2 0 0 1 2 2v16H7a2 2 0 0 1-2-2zM5 19a2 2 0 0 1 2-2h12M10 8h5',qibla:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM16 8l-2.5 5.5L8 16l2.5-5.5z',prayer:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',mosque:'M12 3c1 2 1 3 0 4M5 21V12a7 7 0 0 1 14 0v9M3 21h18M10 21v-4a2 2 0 0 1 4 0v4'};
@@ -838,7 +838,7 @@ function renderH(){
   hj=hijriStr(d,st.hoff||0);
   var hero=document.createElement('div'); hero.className='hero';
   var hmeta=document.createElement('div'); hmeta.className='hm';
-  var b1=document.createElement('b'); b1.textContent=c[0]+L('، المغرب'); var s1=document.createElement('span'); s1.textContent=g; var s2=document.createElement('span'); s2.textContent=hj?hj+L(' (تقريبي)'):'';
+  var b1=document.createElement('b'); var pl0=placeOf(); b1.textContent=pl0.gps?L('موقعك الحالي'):(c[0]+L('، المغرب')); var s1=document.createElement('span'); s1.textContent=g; var s2=document.createElement('span'); s2.textContent=hj?hj+L(' (تقريبي)'):'';
   var hjl=document.createElement('strong'); hjl.className='hjd'; hjl.textContent=hj; s1.className='grd';
   hmeta.appendChild(b1); hmeta.appendChild(hjl); hmeta.appendChild(s1); hero.appendChild(hmeta);
   hero.insertAdjacentHTML('beforeend','<svg viewBox="0 0 400 110" preserveAspectRatio="none" aria-hidden="true"><path d="M0 110V92h40V78c0-8 12-8 12 0v14h28V84c8-14 22-14 30 0v8h22V60l5-8 5 8v32h30V70c0-30 30-38 40-52 10 14 40 22 40 52v22h30V60l5-8 5 8v32h22V84c8-14 22-14 30 0v8h28V78c0-8 12-8 12 0v14h40v18z"/><rect x="199" y="6" width="2" height="14"/></svg>');
